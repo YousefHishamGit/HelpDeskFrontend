@@ -1,4 +1,4 @@
-export const API_BASE_URL = 'https://localhost:7151';
+export const API_BASE_URL = 'http://helpdesk-api.runasp.net/';
 
 export const API_ENDPOINTS = {
   auth: {
