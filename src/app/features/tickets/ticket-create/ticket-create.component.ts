@@ -1,4 +1,5 @@
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
+import { toSignal } from '@angular/core/rxjs-interop';
 import { CommonModule } from '@angular/common';
 import { FormBuilder, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Router, RouterModule } from '@angular/router';
@@ -74,27 +75,27 @@ import { CategoryResponseDto } from '../../../core/models/category.models';
               Category <span class="text-rose-500">*</span>
             </label>
             <div class="relative">
-              @if (isLoadingCategories()) {
-                <div class="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 bg-slate-50 text-slate-400 text-sm flex items-center gap-2">
+              <!-- The select is ALWAYS rendered so the options and the form control stay in sync -->
+              <select
+                id="categoryId"
+                formControlName="categoryId"
+                class="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition appearance-none cursor-pointer pr-10"
+                [ngClass]="{ 'border-rose-400 focus:ring-rose-500': isFieldInvalid('categoryId') }"
+              >
+                <option [ngValue]="''" disabled>
+                  {{ isLoadingCategories() ? 'Loading support categories...' : '-- Select a Category --' }}
+                </option>
+                @for (cat of activeCategories(); track cat.id) {
+                  <option [ngValue]="cat.id">{{ cat.name }}</option>
+                }
+              </select>
+              <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-slate-400">
+                @if (isLoadingCategories()) {
                   <span class="w-4 h-4 border-2 border-indigo-600/30 border-t-indigo-600 rounded-full animate-spin"></span>
-                  <span>Loading support categories...</span>
-                </div>
-              } @else {
-                <select
-                  id="categoryId"
-                  formControlName="categoryId"
-                  class="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition appearance-none cursor-pointer pr-10"
-                  [ngClass]="{ 'border-rose-400 focus:ring-rose-500': isFieldInvalid('categoryId') }"
-                >
-                  <option value="" disabled>-- Select a Category --</option>
-                  @for (cat of activeCategories(); track cat.id) {
-                    <option [value]="cat.id">{{ cat.name }}</option>
-                  }
-                </select>
-                <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-slate-400">
+                } @else {
                   <span class="material-symbols-outlined text-[20px]">expand_more</span>
-                </div>
-              }
+                }
+              </div>
             </div>
 
             @if (isFieldInvalid('categoryId')) {
@@ -228,9 +229,11 @@ export class TicketCreateComponent implements OnInit {
   private router = inject(Router);
 
   categories = signal<CategoryResponseDto[]>([]);
-  isLoadingCategories = signal(true);
+  isLoadingCategories = signal(false);
+  isSubmitting = signal(false);
 
-  activeCategories = computed(() => this.categories().filter(c => c.isActive));
+  // No filtering: show every category returned by the API
+  activeCategories = computed(() => this.categories());
 
   ticketForm: FormGroup = this.fb.group({
     title: ['', [Validators.required, Validators.minLength(5)]],
@@ -239,13 +242,17 @@ export class TicketCreateComponent implements OnInit {
     priority: [TicketPriority.Medium, [Validators.required]]
   });
 
-  selectedCategory = computed(() => {
-    const selectedId = Number(this.ticketForm?.get('categoryId')?.value);
-    if (!selectedId) return null;
-    return this.categories().find(c => c.id === selectedId) || null;
-  });
+  // Turn the control's valueChanges into a signal so `selectedCategory` reacts to changes
+  private selectedCategoryId = toSignal(
+    this.ticketForm.controls['categoryId'].valueChanges,
+    { initialValue: this.ticketForm.controls['categoryId'].value }
+  );
 
-  isSubmitting = signal(false);
+  selectedCategory = computed(() => {
+    const id = Number(this.selectedCategoryId());
+    if (!id) return null;
+    return this.categories().find(c => c.id === id) ?? null;
+  });
 
   ngOnInit(): void {
     this.loadCategories();
@@ -255,13 +262,14 @@ export class TicketCreateComponent implements OnInit {
     this.isLoadingCategories.set(true);
     this.categoryService.getCategories().subscribe({
       next: (data) => {
-        this.categories.set(data);
+        const list = Array.isArray(data) ? data : [];
+        this.categories.set(list);
         this.isLoadingCategories.set(false);
 
-        // Auto-select first active category if available
-        const active = data.filter(c => c.isActive);
-        if (active.length > 0 && !this.ticketForm.value.categoryId) {
-          this.ticketForm.patchValue({ categoryId: active[0].id });
+        // Auto-select first category if nothing is selected yet
+        const current = this.ticketForm.controls['categoryId'].value;
+        if (list.length > 0 && !current) {
+          this.ticketForm.patchValue({ categoryId: list[0].id });
         }
       },
       error: () => {
